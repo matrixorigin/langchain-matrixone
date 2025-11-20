@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "langchain-matrixone"
+version = "0.1.0"
+description = "LangChain integration for MatrixOne"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "Ian Chenyang Zhao" }
+]
+license = { text = "MIT" }
+dependencies = [
+    "langchain-core>=0.3.0",
+    "pymysql>=1.1.0",
+]
+
+[project.urls]
+"Homepage" = "https://langchain-matrixone.readthedocs.io"
+"Source" = "https://github.com/langchain-ai/langchain-matrixone"
+"Documentation" = "https://langchain-matrixone.readthedocs.io"
+"Issues" = "https://github.com/langchain-ai/langchain-matrixone/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "langchain-text-splitters>=0.0.1",
+    "langchain-community>=0.3.0",
+]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["langchain_matrixone"]
+
+# UV configuration
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0",
+    "langchain-text-splitters>=0.0.1",
+    "langchain-community>=0.3.0",
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=1.0",
+]
