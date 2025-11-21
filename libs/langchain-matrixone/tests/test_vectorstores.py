@@ -8,32 +8,38 @@ from langchain_core.embeddings import FakeEmbeddings
 class TestMatrixOneVectorStore(unittest.TestCase):
     def setUp(self):
         self.embedding = FakeEmbeddings(size=4)
-        self.connection_args = {"host": "localhost"}
+        self.connection_args = {
+            "host": "localhost",
+            "port": 6001,
+            "user": "root",
+            "password": "111",
+            "database": "test",
+        }
 
-    @patch("pymysql.connect")
-    def test_init(self, mock_connect):
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+    def _mock_client(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client.vector_ops = MagicMock()
+        mock_client.connected.return_value = True
+        mock_client_cls.return_value = mock_client
+        return mock_client
+
+    @patch("langchain_matrixone.vectorstores.Client")
+    def test_init(self, mock_client_cls):
+        mock_client = self._mock_client(mock_client_cls)
 
         MatrixOneVectorStore(
             embedding=self.embedding,
             connection_args=self.connection_args,
         )
 
-        mock_cursor.execute.assert_called()
-        call_args = mock_cursor.execute.call_args[0][0]
-        self.assertIn("CREATE TABLE IF NOT EXISTS langchain_vectors", call_args)
-        self.assertIn("VECF32(4)", call_args)
+        mock_client.connect.assert_called_once_with(**self.connection_args)
+        create_call = mock_client.execute.call_args_list[-1][0][0]
+        self.assertIn("CREATE TABLE IF NOT EXISTS langchain_vectors", create_call)
+        self.assertIn("VECF32(4)", create_call)
 
-    @patch("pymysql.connect")
-    def test_add_texts(self, mock_connect):
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-
+    @patch("langchain_matrixone.vectorstores.Client")
+    def test_add_texts(self, mock_client_cls):
+        mock_client = self._mock_client(mock_client_cls)
         store = MatrixOneVectorStore(
             embedding=self.embedding,
             connection_args=self.connection_args,
@@ -43,21 +49,18 @@ class TestMatrixOneVectorStore(unittest.TestCase):
         ids = store.add_texts(texts)
 
         self.assertEqual(len(ids), 2)
+        mock_client.vector_ops.batch_insert.assert_called_once()
+        table_arg, batch_payload = mock_client.vector_ops.batch_insert.call_args[0]
+        self.assertEqual(table_arg, "langchain_vectors")
+        self.assertEqual(len(batch_payload), 2)
+        self.assertIn("content", batch_payload[0])
 
-        calls = [call[0][0] for call in mock_cursor.execute.call_args_list]
-        insert_calls = [c for c in calls if "INSERT INTO" in c]
-        self.assertGreaterEqual(len(insert_calls), 2)
-
-    @patch("pymysql.connect")
-    def test_similarity_search(self, mock_connect):
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-
-        mock_cursor.fetchall.return_value = [
-            ("content1", '{"key": "val"}', 0.1),
-            ("content2", '{}', 0.2),
+    @patch("langchain_matrixone.vectorstores.Client")
+    def test_similarity_search(self, mock_client_cls):
+        mock_client = self._mock_client(mock_client_cls)
+        mock_client.vector_ops.similarity_search.return_value = [
+            {"content": "content1", "metadata": '{"key": "val"}'},
+            {"content": "content2", "metadata": "{}"},
         ]
 
         store = MatrixOneVectorStore(
@@ -70,18 +73,11 @@ class TestMatrixOneVectorStore(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertEqual(results[0].page_content, "content1")
         self.assertEqual(results[0].metadata, {"key": "val"})
+        mock_client.vector_ops.similarity_search.assert_called_once()
 
-        calls = [call[0][0] for call in mock_cursor.execute.call_args_list]
-        select_calls = [c for c in calls if "SELECT" in c and "l2_distance" in c]
-        self.assertGreaterEqual(len(select_calls), 1)
-
-    @patch("pymysql.connect")
-    def test_delete(self, mock_connect):
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-
+    @patch("langchain_matrixone.vectorstores.Client")
+    def test_delete(self, mock_client_cls):
+        mock_client = self._mock_client(mock_client_cls)
         store = MatrixOneVectorStore(
             embedding=self.embedding,
             connection_args=self.connection_args,
@@ -89,9 +85,11 @@ class TestMatrixOneVectorStore(unittest.TestCase):
 
         store.delete(ids=["1", "2"])
 
-        calls = [call[0][0] for call in mock_cursor.execute.call_args_list]
-        delete_calls = [c for c in calls if "DELETE FROM" in c]
-        self.assertGreaterEqual(len(delete_calls), 1)
+        delete_call = mock_client.execute.call_args_list[-1]
+        sql = delete_call[0][0]
+        params = delete_call[0][1]
+        self.assertIn("DELETE FROM", sql)
+        self.assertEqual(params, ("1", "2"))
 
 
 if __name__ == "__main__":

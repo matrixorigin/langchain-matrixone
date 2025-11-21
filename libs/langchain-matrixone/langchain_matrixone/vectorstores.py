@@ -5,10 +5,10 @@ import logging
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
-import pymysql
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
+from matrixone import Client
 
 logger = logging.getLogger(__name__)
 
@@ -19,47 +19,66 @@ class MatrixOneVectorStore(VectorStore):
     def __init__(
         self,
         embedding: Embeddings,
-        connection_args: Dict[str, Any],
+        connection_args: Optional[Dict[str, Any]] = None,
+        *,
+        client: Optional[Client] = None,
         table_name: str = "langchain_vectors",
         content_column: str = "content",
         metadata_column: str = "metadata",
         vector_column: str = "embedding",
         drop_old: bool = False,
+        distance: str = "l2",
     ) -> None:
+        if client is None and not connection_args:
+            raise ValueError("Either an existing MatrixOne Client or connection_args must be provided.")
+
         self.embedding = embedding
-        self.connection_args = connection_args
+        self.connection_args = connection_args or {}
         self.table_name = table_name
         self.content_column = content_column
         self.metadata_column = metadata_column
         self.vector_column = vector_column
+        self.distance = distance
+
+        self.client = client or Client()
+        self._owns_client = client is None
+
+        if self._owns_client:
+            self._connect_client()
+        elif not self.client.connected():
+            raise ValueError("Provided MatrixOne Client is not connected.")
 
         self._create_table_if_not_exists(drop_old)
 
-    def _get_connection(self):
-        return pymysql.connect(**self.connection_args)
+    def _connect_client(self) -> None:
+        required_keys = {"host", "port", "user", "password", "database"}
+        missing = required_keys - self.connection_args.keys()
+        if missing:
+            raise ValueError(f"connection_args missing required keys: {', '.join(sorted(missing))}")
+
+        self.client.connect(**self.connection_args)
 
     def _create_table_if_not_exists(self, drop_old: bool = False) -> None:
-        conn = self._get_connection()
-        try:
-            with conn.cursor() as cursor:
-                if drop_old:
-                    cursor.execute(f"DROP TABLE IF EXISTS {self.table_name}")
+        dummy_embedding = self.embedding.embed_query("matrixone-init")
+        dim = len(dummy_embedding)
 
-                dummy_embedding = self.embedding.embed_query("test")
-                dim = len(dummy_embedding)
+        if drop_old:
+            self.client.execute(f"DROP TABLE IF EXISTS {self.table_name}")
 
-                create_sql = f"""
-                CREATE TABLE IF NOT EXISTS {self.table_name} (
-                    id VARCHAR(36) PRIMARY KEY,
-                    {self.content_column} TEXT,
-                    {self.metadata_column} JSON,
-                    {self.vector_column} VECF32({dim})
-                )
-                """
-                cursor.execute(create_sql)
-            conn.commit()
-        finally:
-            conn.close()
+        create_sql = f"""
+        CREATE TABLE IF NOT EXISTS {self.table_name} (
+            id VARCHAR(36) PRIMARY KEY,
+            {self.content_column} TEXT,
+            {self.metadata_column} JSON,
+            {self.vector_column} VECF32({dim})
+        )
+        """
+        self.client.execute(create_sql)
+
+    def _format_metadata(self, metadata: Optional[dict]) -> str:
+        if not metadata:
+            return "{}"
+        return json.dumps(metadata)
 
     def add_texts(
         self,
@@ -77,23 +96,18 @@ class MatrixOneVectorStore(VectorStore):
         if not metadatas:
             metadatas = [{} for _ in texts]
 
-        conn = self._get_connection()
-        try:
-            with conn.cursor() as cursor:
-                for idx, text in enumerate(texts):
-                    metadata = json.dumps(metadatas[idx])
-                    vector_str = str(embeddings[idx])
+        records: List[Dict[str, Any]] = []
+        for idx, text in enumerate(texts):
+            records.append(
+                {
+                    "id": ids[idx],
+                    self.content_column: text,
+                    self.metadata_column: self._format_metadata(metadatas[idx]),
+                    self.vector_column: embeddings[idx],
+                }
+            )
 
-                    sql = f"""
-                    INSERT INTO {self.table_name}
-                    (id, {self.content_column}, {self.metadata_column}, {self.vector_column})
-                    VALUES (%s, %s, %s, %s)
-                    """
-                    cursor.execute(sql, (ids[idx], text, metadata, vector_str))
-            conn.commit()
-        finally:
-            conn.close()
-
+        self.client.vector_ops.batch_insert(self.table_name, records)
         return ids
 
     def similarity_search(
@@ -105,26 +119,32 @@ class MatrixOneVectorStore(VectorStore):
     def similarity_search_by_vector(
         self, embedding: List[float], k: int = 4, **kwargs: Any
     ) -> List[Document]:
-        vector_str = str(embedding)
-
-        conn = self._get_connection()
-        try:
-            with conn.cursor() as cursor:
-                sql = f"""
-                SELECT {self.content_column}, {self.metadata_column},
-                       l2_distance({self.vector_column}, %s) as score
-                FROM {self.table_name}
-                ORDER BY score ASC
-                LIMIT %s
-                """
-                cursor.execute(sql, (vector_str, k))
-                results = cursor.fetchall()
-        finally:
-            conn.close()
+        rows = self.client.vector_ops.similarity_search(
+            self.table_name,
+            vector_column=self.vector_column,
+            query_vector=embedding,
+            limit=k,
+            select_columns=[self.content_column, self.metadata_column],
+            distance_type=self.distance,
+        )
 
         docs: List[Document] = []
-        for content, metadata_json, _score in results:
-            metadata = json.loads(metadata_json) if metadata_json else {}
+        for row in rows:
+            content = row.get(self.content_column)
+            metadata_value = row.get(self.metadata_column)
+            metadata: Dict[str, Any]
+            if isinstance(metadata_value, dict):
+                metadata = metadata_value
+            elif isinstance(metadata_value, str) and metadata_value:
+                try:
+                    metadata = json.loads(metadata_value)
+                except json.JSONDecodeError:
+                    metadata = {"raw_metadata": metadata_value}
+            else:
+                metadata = {}
+
+            if content is None:
+                continue
             docs.append(Document(page_content=content, metadata=metadata))
         return docs
 
@@ -132,16 +152,9 @@ class MatrixOneVectorStore(VectorStore):
         if not ids:
             return True
 
-        conn = self._get_connection()
-        try:
-            with conn.cursor() as cursor:
-                format_strings = ",".join(["%s"] * len(ids))
-                sql = f"DELETE FROM {self.table_name} WHERE id IN ({format_strings})"
-                cursor.execute(sql, tuple(ids))
-            conn.commit()
-        finally:
-            conn.close()
-
+        placeholders = ", ".join(["?"] * len(ids))
+        sql = f"DELETE FROM {self.table_name} WHERE id IN ({placeholders})"
+        self.client.execute(sql, tuple(ids))
         return True
 
     @classmethod
@@ -151,11 +164,21 @@ class MatrixOneVectorStore(VectorStore):
         embedding: Embeddings,
         metadatas: Optional[List[dict]] = None,
         connection_args: Optional[Dict[str, Any]] = None,
+        client: Optional[Client] = None,
         **kwargs: Any,
     ) -> "MatrixOneVectorStore":
-        if not connection_args:
-            raise ValueError("connection_args must be provided")
-
-        store = cls(embedding=embedding, connection_args=connection_args, **kwargs)
+        store = cls(
+            embedding=embedding,
+            connection_args=connection_args,
+            client=client,
+            **kwargs,
+        )
         store.add_texts(texts, metadatas=metadatas)
         return store
+
+    def __del__(self) -> None:
+        if getattr(self, "_owns_client", False):
+            try:
+                self.client.disconnect()
+            except Exception:  # pragma: no cover - best effort cleanup
+                pass

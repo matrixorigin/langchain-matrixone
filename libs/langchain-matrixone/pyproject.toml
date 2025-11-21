@@ -14,7 +14,7 @@ authors = [
 license = { text = "MIT" }
 dependencies = [
     "langchain-core>=0.3.0",
-    "pymysql>=1.1.0",
+    "matrixone-python-sdk>=0.1.11",
 ]
 
 [project.urls]
