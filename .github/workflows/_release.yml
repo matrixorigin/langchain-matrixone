@@ -12,7 +12,7 @@ on:
       working-directory:
         required: true
         type: string
-        default: "libs/langchain-matrixone"
+        default: "libs"
         description: "From which folder this pipeline executes"
       dangerous-nonmaster-release:
         required: false
