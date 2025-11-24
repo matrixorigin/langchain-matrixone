@@ -37,9 +37,7 @@ jobs:
         run: uv sync --group test --dev
 
       - name: Run core tests
-        shell: bash
-        run: |
-          make test
+        run: uv run pytest
 
       - name: Ensure the tests did not create any additional files
         shell: bash

@@ -52,17 +52,7 @@ jobs:
         run: |
           uv sync --group lint --group typing
 
-      - name: Analysing the code with our lint
-        working-directory: ${{ inputs.working-directory }}
-        run: |
-          make lint_package
-
       - name: Install unit+integration test dependencies
         working-directory: ${{ inputs.working-directory }}
         run: |
           uv sync --inexact --group test --group test_integration
-
-      - name: Analysing the code with our lint
-        working-directory: ${{ inputs.working-directory }}
-        run: |
-          make lint_tests

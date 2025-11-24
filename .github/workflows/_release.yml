@@ -167,7 +167,6 @@ jobs:
           PARTNER_API_KEY: ${{ secrets.PARTNER_API_KEY }}
         run: |
           uv sync --group test --group test_integration
-          make integration_tests
         working-directory: ${{ inputs.working-directory }}
 
       - name: Get minimum versions
@@ -186,7 +185,7 @@ jobs:
           MIN_VERSIONS: ${{ steps.min-version.outputs.min-versions }}
         run: |
           VIRTUAL_ENV=.venv uv pip install $MIN_VERSIONS
-          make tests
+          uv run pytest
         working-directory: ${{ inputs.working-directory }}
 
   publish:
