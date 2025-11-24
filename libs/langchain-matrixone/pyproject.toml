@@ -38,11 +38,33 @@ docs = [
 packages = ["langchain_matrixone"]
 
 # UV configuration
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=7.0",
     "langchain-text-splitters>=0.0.1",
     "langchain-community>=0.3.0",
     "sphinx>=7.0",
     "sphinx-rtd-theme>=1.0",
+    "ruff>=0.6.4",
+    "pyright>=1.1.384",
+]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=1.0",
+]
+lint = [
+    "ruff>=0.6.4",
+]
+typing = [
+    "pyright>=1.1.384",
+]
+test = [
+    "pytest>=7.0",
+    "langchain-text-splitters>=0.0.1",
+    "langchain-community>=0.3.0",
+]
+test_integration = [
+    "pytest>=7.0",
+    "langchain-text-splitters>=0.0.1",
+    "langchain-community>=0.3.0",
 ]
