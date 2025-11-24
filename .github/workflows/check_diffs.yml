@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
       - id: files
         uses: Ana06/get-changed-files@v2.2.0
       - id: set-matrix
@@ -38,7 +38,7 @@ jobs:
       dirs-to-test: ${{ steps.set-matrix.outputs.dirs-to-test }}
   lint:
     name: cd ${{ matrix.working-directory }}
-    needs: [ build ]
+    needs: [build]
     if: ${{ needs.build.outputs.dirs-to-lint != '[]' }}
     strategy:
       matrix:
@@ -50,7 +50,7 @@ jobs:
 
   test:
     name: cd ${{ matrix.working-directory }}
-    needs: [ build ]
+    needs: [build]
     if: ${{ needs.build.outputs.dirs-to-test != '[]' }}
     strategy:
       matrix:
@@ -62,7 +62,7 @@ jobs:
 
   compile-integration-tests:
     name: cd ${{ matrix.working-directory }}
-    needs: [ build ]
+    needs: [build]
     if: ${{ needs.build.outputs.dirs-to-test != '[]' }}
     strategy:
       matrix:
