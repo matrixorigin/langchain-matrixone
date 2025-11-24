@@ -23,7 +23,7 @@ jobs:
         python-version:
           - "3.9"
           - "3.12"
-    name: "make test #${{ matrix.python-version }}"
+    name: "pytest #${{ matrix.python-version }}"
     steps:
       - uses: actions/checkout@v4
 
@@ -37,9 +37,7 @@ jobs:
         run: uv sync --group test --dev
 
       - name: Run core tests
-        shell: bash
-        run: |
-          make test
+        run: uv run pytest
 
       - name: Ensure the tests did not create any additional files
         shell: bash
